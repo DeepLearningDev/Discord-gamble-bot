@@ -8,7 +8,7 @@ import hikari, crescent, miru
 plugin = crescent.Plugin[hikari.GatewayBot, None]()
 
 from gambling.client_instance import guild_id  # Ensure guild_id is an int
-from gambling.points import get_points, update_points  # External points functions
+from gambling.points import get_points, update_points
 
 # Global dictionary to store active Blackjack game states.
 # Keys are message IDs (as strings) and values are dictionaries holding game state.

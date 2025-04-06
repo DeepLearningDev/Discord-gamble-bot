@@ -5,7 +5,7 @@ import hikari, crescent, miru
 plugin = crescent.Plugin[hikari.GatewayBot, None]()
 
 from gambling.client_instance import guild_id  # Ensure guild_id is an int
-from gambling.points import get_points  # Import points functions if needed elsewhere
+from gambling.points import get_points
 
 PREDICTIONS_FILE = "predictions.json"
 

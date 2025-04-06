@@ -6,7 +6,7 @@ import hikari
 import crescent
 
 from gambling.client_instance import bot, client, guild_id
-from gambling.points import add_point, get_points  # Import points functions
+from gambling.points import get_points, add_point
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("hikari")

@@ -6,7 +6,7 @@ import hikari, crescent, miru
 plugin = crescent.Plugin[hikari.GatewayBot, None]()
 
 from gambling.client_instance import guild_id  # Ensure guild_id is an int
-from gambling.points import get_points, update_points  # External points functions
+from gambling.points import get_points, update_points
 
 # Allowed bets in increasing order.
 ALLOWED_BETS: List[int] = [10, 25, 50, 100, 250, 500, 1000]
