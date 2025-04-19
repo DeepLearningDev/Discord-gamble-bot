@@ -1,18 +1,11 @@
 import asyncio
 import os
 import time
-import logging
 import hikari
 import crescent
 
 from gambling.client_instance import bot, client, guild_id
 from gambling.points import get_points, add_point
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("hikari")
-logger2 = logging.getLogger("crescent")
-logger.setLevel(logging.DEBUG)
-logger2.setLevel(logging.DEBUG)
 
 @client.include
 @crescent.command(name="ping", description="Check bot latency", guild=guild_id)
@@ -29,7 +22,7 @@ async def on_message(event: hikari.MessageCreateEvent) -> None:
         return
     add_point(event.author.id)
     print(f"{event.author.username} now has {get_points(event.author.id)} points.")
-
+    
 @client.include
 @crescent.command(name="points", description="Check your points", guild=guild_id)
 async def points(ctx: crescent.Context) -> None:

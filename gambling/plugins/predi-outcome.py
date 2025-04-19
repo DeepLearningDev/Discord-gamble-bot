@@ -70,7 +70,7 @@ class PrediOutcome:
 
         # Fetch display names for each voter concurrently.
         user_ids = list(event_data["votes"].keys())
-        members = await gather(*(ctx.rest.fetch_member(guild_id, int(uid)) for uid in user_ids))
+        members = await gather(*(ctx.app.rest.fetch_member(guild_id, int(uid)) for uid in user_ids))
         names = {str(member.user.id): member.display_name for member in members}
 
         # Build a nicely formatted results output.

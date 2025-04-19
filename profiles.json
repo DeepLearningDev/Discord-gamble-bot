@@ -3,7 +3,37 @@
         "user_id": "131687914735140864",
         "title": "creator",
         "color": "0x32CD32",
-        "points": 10,
+        "points": 4050,
+        "wins_blackjack": 0,
+        "wins_predi": 0,
+        "achievements": [],
+        "inventory": []
+    },
+    "206479508826619904": {
+        "user_id": "206479508826619904",
+        "title": "",
+        "color": "",
+        "points": 3420,
+        "wins_blackjack": 0,
+        "wins_predi": 0,
+        "achievements": [],
+        "inventory": []
+    },
+    "146409622641573888": {
+        "user_id": "146409622641573888",
+        "title": "",
+        "color": "",
+        "points": 1086,
+        "wins_blackjack": 0,
+        "wins_predi": 0,
+        "achievements": [],
+        "inventory": []
+    },
+    "165882836438482944": {
+        "user_id": "165882836438482944",
+        "title": "",
+        "color": "",
+        "points": 4710,
         "wins_blackjack": 0,
         "wins_predi": 0,
         "achievements": [],

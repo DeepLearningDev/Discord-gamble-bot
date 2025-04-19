@@ -11,7 +11,6 @@ from gambling.client_instance import guild_id  # Ensure guild_id is an int
 from gambling.points import get_points, update_points
 
 # Global dictionary to store active Blackjack game states.
-# Keys are message IDs (as strings) and values are dictionaries holding game state.
 GAMES = {}
 
 # Card definitions.
@@ -19,6 +18,7 @@ card_ranks = ['Ace', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'Jack', 'Quee
 card_suits = ["Hearts", "Spades", "Clubs", "Diamonds"]
 
 def draw(amount=1):
+    """Draw 'amount' cards randomly from an infinite deck."""
     hand = []
     for _ in range(amount):
         rank = r.choice(card_ranks)
@@ -27,6 +27,7 @@ def draw(amount=1):
     return hand
 
 def calculate_total(hand):
+    """Calculate a blackjack hand's total, counting Aces as 11 or 1 as needed."""
     total = 0
     aces = 0
     for rank, _ in hand:
@@ -43,67 +44,71 @@ def calculate_total(hand):
     return total
 
 def hand_to_str(hand):
+    """Return a string representation of a hand."""
     return ", ".join(f"{rank} of {suit}" for rank, suit in hand)
 
-def simulate_dealer_hand():
-    dealer_hand = draw(2)
-    dealer_total = calculate_total(dealer_hand)
-    while dealer_total < 17:
+def is_blackjack(hand):
+    """Check if a given two-card hand is a blackjack."""
+    return len(hand) == 2 and calculate_total(hand) == 21
+
+def simulate_dealer_turn(dealer_hand):
+    """Dealer reveals the hidden card and hits until total is 17 or more.
+       Dealer stands on soft 17 (Ace counted as 11 if it brings total to 17)."""
+    total = calculate_total(dealer_hand)
+    while total < 17:
         dealer_hand.append(draw(1)[0])
-        dealer_total = calculate_total(dealer_hand)
-    return dealer_hand, dealer_total
+        total = calculate_total(dealer_hand)
+    return dealer_hand, total
 
-# --- Rewards Helper Function ---
-def calculate_rewards(bet: int, outcome: str) -> int:
-    """
-    Returns the reward amount (positive if points are won, negative if lost).
-    Outcome should be one of: "blackjack", "win", "tie", "loss".
-    """
-    if outcome == "blackjack":
-        return bet * 5
-    elif outcome == "win":
-        return int(bet + (bet / 2))
-    elif outcome == "tie":
-        return bet
-    elif outcome == "loss":
-        return -bet
-    return 0
-
-# --- Helper Functions ---
-def disable_view(view: miru.View) -> list:
-    for item in view.children:
-        item.disabled = True
+def build_blackjack_view(can_double: bool) -> list:
+    view = miru.View(timeout=180)
+    view.add_item(
+        miru.Button(
+            style=hikari.ButtonStyle.PRIMARY,
+            label="Hit",
+            custom_id="bj_hit"
+        )
+    )
+    view.add_item(
+        miru.Button(
+            style=hikari.ButtonStyle.SECONDARY,
+            label="Stand",
+            custom_id="bj_stand"
+        )
+    )
+    if can_double:
+        view.add_item(
+            miru.Button(
+                style=hikari.ButtonStyle.SUCCESS,
+                label="Double Down",
+                custom_id="bj_double"
+            )
+        )
     return view.build()
 
-async def send_ephemeral_update(interaction: hikari.ComponentInteraction, content: str, view: miru.View) -> None:
-    await interaction.create_initial_response(
-        hikari.ResponseType.MESSAGE_UPDATE,
-        content=content,
-        components=disable_view(view),
-        flags=hikari.MessageFlag.EPHEMERAL
-    )
 
-# --- Command and Listeners ---
+def classify_win(outcome: str) -> str:
+    """Returns a descriptive string based on the outcome."""
+    mapping = {
+        "blackjack": "Blackjack (3:2 payout)",
+        "win": "Win",
+        "tie": "Push (tie)",
+        "loss": "Loss"
+    }
+    return mapping.get(outcome, outcome)
+
 @plugin.include
 @crescent.command(
     name="blackjack",
-    description="Play a game of blackjack. Bet at least 10 points.",
+    description="Play blackjack! Bet at least 10 points.",
     guild=guild_id
 )
 class Blackjack:
-    bet: int = crescent.option(int, "Enter your bet amount (minimum 10 points)")
+    bet: int = crescent.option(int, "Enter your bet amount (min 10 points)")
 
     async def callback(self, ctx: crescent.Context) -> None:
-        if self.bet < 10:
-            await ctx.respond("❌ The minimum bet is **10** points.", flags=hikari.MessageFlag.EPHEMERAL)
-            return
-
-        user_id = ctx.interaction.user.id
-        if get_points(user_id) < self.bet:
-            await ctx.respond("❌ You don't have enough points to make that bet!", flags=hikari.MessageFlag.EPHEMERAL)
-            return
-
         # Delete any existing game for this user.
+        user_id = ctx.interaction.user.id
         for existing_game_id, existing_game in list(GAMES.items()):
             if existing_game["user_id"] == user_id:
                 try:
@@ -116,259 +121,204 @@ class Blackjack:
                     pass
                 del GAMES[existing_game_id]
 
-        # Create a view with Hit and Stay buttons.
+        if self.bet < 10:
+            await ctx.respond("❌ The minimum bet is 10 points.", flags=hikari.MessageFlag.EPHEMERAL)
+            return
+
+        if get_points(user_id) < self.bet:
+            await ctx.respond("❌ You don't have enough points to make that bet!", flags=hikari.MessageFlag.EPHEMERAL)
+            return
+
+        # Initial Deal:
+        player_hand = draw(2)
+        dealer_hand = draw(2)
+        dealer_upcard = dealer_hand[0]  # Dealer's upcard is always visible
+
+        # Check for naturals:
+        player_blackjack = is_blackjack(player_hand)
+        dealer_blackjack = is_blackjack(dealer_hand)
+
+        # Create a view for player's turn (Hit, Stand, Double Down if allowed).
+        can_double = (len(player_hand) == 2 and get_points(user_id) >= self.bet * 2)
         view = miru.View(timeout=180)
         view.add_item(miru.Button(style=hikari.ButtonStyle.PRIMARY, label="Hit", custom_id="bj_hit"))
-        view.add_item(miru.Button(style=hikari.ButtonStyle.SECONDARY, label="Stay", custom_id="bj_stay"))
+        view.add_item(miru.Button(style=hikari.ButtonStyle.SECONDARY, label="Stand", custom_id="bj_stand"))
+        if can_double:
+            view.add_item(miru.Button(style=hikari.ButtonStyle.SUCCESS, label="Double Down", custom_id="bj_double"))
 
-        hand = draw(2)
-        total = calculate_total(hand)
         content = (
-            f"🎲 **Blackjack** 🎲\n\n"
-            f"**Bet:** {self.bet} points\n"
-            f"**Your Hand:** {hand_to_str(hand)}\n"
-            f"**Total:** {total}\n\n"
-            "Choose your action:"
+            "♠️ **Blackjack** ♠️\n\n"
+            f"**Bet:** {self.bet} points\n\n"
+            f"**Your Hand:** {hand_to_str(player_hand)} | Total: {calculate_total(player_hand)}\n"
+            f"**Dealer's Upcard:** {hand_to_str([dealer_upcard])}\n"
         )
 
-        await ctx.respond(content, components=view.build(), flags=hikari.MessageFlag.EPHEMERAL)
+        # Natural blackjack check:
+        if player_blackjack or dealer_blackjack:
+            content += f"**Dealer's Hand:** {hand_to_str(dealer_hand)} (Total: {calculate_total(dealer_hand)})\n\n"
+            if player_blackjack and not dealer_blackjack:
+                outcome = "blackjack"
+                winnings = int(self.bet * 1.5)
+                update_points(user_id, get_points(user_id) + winnings)
+                content += f"🎉 You got a Blackjack! You win {winnings} points!"
+            elif dealer_blackjack and not player_blackjack:
+                outcome = "loss"
+                update_points(user_id, get_points(user_id) - self.bet)
+                content += f"😞 Dealer has a Blackjack. You lose your bet of {self.bet} points."
+            else:
+                outcome = "tie"
+                content += "🤝 It's a push. Your bet is returned."
+            content += f"\n\n**New Total:** {get_points(user_id)} points"
+            await ctx.respond(content, )
+            return
+
+        content += "\nChoose your action:"
+        await ctx.respond(content, components=view.build(), )
         message = await ctx.interaction.fetch_initial_response()
         game_id = str(message.id)
         GAMES[game_id] = {
-            "hand": hand,
-            "total": total,
+            "player_hand": player_hand,
+            "dealer_hand": dealer_hand,
             "bet": self.bet,
             "user_id": user_id,
-            "view": view
+            "view": view,
+            "doubled": False
         }
         await view.wait()
 
 @plugin.include
 @crescent.event
-async def on_component_hit(event: hikari.InteractionCreateEvent) -> None:
-    interaction = event.interaction
-    if not (isinstance(interaction, hikari.ComponentInteraction) and interaction.custom_id == "bj_hit"):
+async def on_component_blackjack(event: hikari.InteractionCreateEvent) -> None:
+    if not isinstance(event.interaction, hikari.ComponentInteraction):
+        return
+    if event.interaction.custom_id not in ["bj_hit", "bj_stand", "bj_double"]:
         return
 
-    game_id = str(interaction.message.id)
+    game_id = str(event.interaction.message.id)
     if game_id not in GAMES:
-        await interaction.create_initial_response(
+        await event.interaction.create_initial_response(
             hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ Game not found.",
+            content="❌ Game not found.",
             flags=hikari.MessageFlag.EPHEMERAL
         )
         return
 
     game = GAMES[game_id]
-    if interaction.user.id != game["user_id"]:
-        await interaction.create_initial_response(
+    user_id = game["user_id"]
+    if event.interaction.user.id != user_id:
+        await event.interaction.create_initial_response(
             hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ This isn't your game!",
+            content="❌ This isn't your game!",
             flags=hikari.MessageFlag.EPHEMERAL
         )
         return
 
-    try:
-        new_card = draw(1)[0]
-        game["hand"].append(new_card)
-        game["total"] = calculate_total(game["hand"])
-        content = (
-            f"🎲 **Blackjack Update** 🎲\n\n"
-            f"**Bet:** {game['bet']} points\n"
-            f"**Your Hand:** {hand_to_str(game['hand'])}\n"
-            f"**Total:** {game['total']}\n\n"
-        )
-        # Add Double Down button dynamically after the first hit.
-        if len(game["hand"]) > 2 and not any(item.custom_id == "bj_double" for item in game["view"].children):
-            game["view"].add_item(miru.Button(style=hikari.ButtonStyle.SUCCESS, label="Double Down", custom_id="bj_double"))
+    action = event.interaction.custom_id
+    player_hand = game["player_hand"]
+    dealer_hand = game["dealer_hand"]
+    dealer_upcard = dealer_hand[0]
+    bet = game["bet"]
 
-        if game["total"] > 21:
-            outcome_key = "loss"
-            outcome_text = "❌ **Bust! You lose your bet.**"
-            reward = calculate_rewards(game["bet"], outcome_key)
-            new_total = get_points(game["user_id"]) + reward
-            update_points(game["user_id"], new_total)
-            content += f"{outcome_text}\nYou lost **{abs(reward)}** points.\nYour new total: **{new_total}** points."
-            await send_ephemeral_update(interaction, content, game["view"])
-            del GAMES[game_id]
-        elif game["total"] == 21:
-            outcome_key = "blackjack"
-            outcome_text = "🎉 **Blackjack! You win double your bet!**"
-            reward = calculate_rewards(game["bet"], outcome_key)
-            new_total = get_points(game["user_id"]) + reward
-            update_points(game["user_id"], new_total)
-            content += f"{outcome_text}\nYou won **{reward}** points.\nYour new total: **{new_total}** points."
-            await send_ephemeral_update(interaction, content, game["view"])
-            del GAMES[game_id]
-        else:
-            content += "Choose your next action:"
-            await interaction.create_initial_response(
+    if action == "bj_hit":
+        new_card = draw(1)[0]
+        player_hand.append(new_card)
+        total = calculate_total(player_hand)
+        content = (
+            "♠️ **Blackjack Update** ♠️\n\n"
+            f"**Your Hand:** {hand_to_str(player_hand)} (Total: {total})\n"
+            f"**Dealer's Upcard:** {hand_to_str([dealer_upcard])}\n"
+        )
+        if total > 21:
+            update_points(user_id, get_points(user_id) - bet)
+            content += f"❌ **Bust!** You exceeded 21 and lost your bet of {bet} points.\n\n"
+            content += f"**New Total:** {get_points(user_id)} points"
+            await event.interaction.create_initial_response(
                 hikari.ResponseType.MESSAGE_UPDATE,
                 content=content,
-                components=game["view"].build(),
-                flags=hikari.MessageFlag.EPHEMERAL
+                
             )
-    except Exception:
-        traceback.print_exc()
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ An error occurred while processing your action.",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-
-@plugin.include
-@crescent.event
-async def on_component_stay(event: hikari.InteractionCreateEvent) -> None:
-    interaction = event.interaction
-    if not (isinstance(interaction, hikari.ComponentInteraction) and interaction.custom_id == "bj_stay"):
-        return
-
-    game_id = str(interaction.message.id)
-    if game_id not in GAMES:
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ Game not found.",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-        return
-
-    game = GAMES[game_id]
-    if interaction.user.id != game["user_id"]:
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ This isn't your game!",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-        return
-
-    try:
-        dealer_hand, dealer_total = simulate_dealer_hand()
-        dealer_str = hand_to_str(dealer_hand)
-        player_total = game["total"]
-
-        if dealer_total > 21:
-            outcome_key = "win"
-            outcome_text = "🎉 **Dealer busts! You win!**"
-        elif dealer_total == player_total:
-            outcome_key = "tie"
-            outcome_text = "🤝 **Push! It's a tie.**"
-        elif dealer_total > player_total:
-            outcome_key = "loss"
-            outcome_text = "❌ **Dealer wins! You lose your bet.**"
+            del GAMES[game_id]
+            return
         else:
-            outcome_key = "win"
-            outcome_text = "🎉 **You win!**"
-
-        reward = calculate_rewards(game["bet"], outcome_key)
-        new_total = get_points(game["user_id"]) + reward
-        update_points(game["user_id"], new_total)
-        content = (
-            f"🎲 **Final Results** 🎲\n\n"
-            f"**Your Final Hand:** {hand_to_str(game['hand'])}\n"
-            f"**Your Total:** {player_total}\n\n"
-            f"**Dealer's Hand:** {dealer_str}\n"
-            f"**Dealer's Total:** {dealer_total}\n\n"
-            f"**Bet:** {game['bet']} points\n"
-            f"{outcome_text}\n"
-            f"You {'won' if reward > 0 else 'lost' if reward < 0 else 'broke even'}, "
-            f"receiving a net change of **{abs(reward)}** points.\n"
-            f"Your new total is **{new_total}** points."
-        )
-        await send_ephemeral_update(interaction, content, game["view"])
-        del GAMES[game_id]
-    except Exception:
-        traceback.print_exc()
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ An error occurred while processing your action.",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-
-@plugin.include
-@crescent.event
-async def on_component_double(event: hikari.InteractionCreateEvent) -> None:
-    interaction = event.interaction
-    if not (isinstance(interaction, hikari.ComponentInteraction) and interaction.custom_id == "bj_double"):
-        return
-
-    game_id = str(interaction.message.id)
-    if game_id not in GAMES:
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ Game not found.",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-        return
-
-    game = GAMES[game_id]
-    if interaction.user.id != game["user_id"]:
-        await interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ This isn't your game!",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-        return
-
-    try:
-        if len(game["hand"]) <= 2:
-            await interaction.create_initial_response(
+            content += "Choose your next action:"
+            view = build_blackjack_view(can_double=False)
+            game["view"] = view
+            await event.interaction.create_initial_response(
                 hikari.ResponseType.MESSAGE_UPDATE,
-                "❌ Double Down is allowed only after your first hit.",
+                content=content,
+                components=view,
+                
+            )
+    elif action == "bj_double":
+        if get_points(user_id) < bet:
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_UPDATE,
+                content="❌ Not enough points to double down.",
                 flags=hikari.MessageFlag.EPHEMERAL
             )
             return
-
-        if get_points(game["user_id"]) < game["bet"] * 2:
-            await interaction.create_initial_response(
-                hikari.ResponseType.MESSAGE_UPDATE,
-                "❌ You don't have enough points to double down.",
-                flags=hikari.MessageFlag.EPHEMERAL
-            )
-            return
-
+        update_points(user_id, get_points(user_id) - bet)
         game["bet"] *= 2
+        game["doubled"] = True
         new_card = draw(1)[0]
-        game["hand"].append(new_card)
-        game["total"] = calculate_total(game["hand"])
-
-        dealer_hand, dealer_total = simulate_dealer_hand()
-        dealer_str = hand_to_str(dealer_hand)
-        player_total = game["total"]
-
-        if dealer_total > 21:
-            outcome_key = "win"
-            outcome_text = "🎉 **Dealer busts! You win!**"
-        elif dealer_total == player_total:
-            outcome_key = "tie"
-            outcome_text = "🤝 **Push! It's a tie.**"
-        elif dealer_total > player_total:
-            outcome_key = "loss"
-            outcome_text = "❌ **Dealer wins! You lose your bet.**"
-        else:
-            outcome_key = "win"
-            outcome_text = "🎉 **You win!**"
-
-        reward = calculate_rewards(game["bet"], outcome_key)
-        new_total = get_points(game["user_id"]) + reward
-        update_points(game["user_id"], new_total)
+        player_hand.append(new_card)
+        total = calculate_total(player_hand)
         content = (
-            f"🎲 **Final Results** 🎲\n\n"
-            f"**Your Final Hand:** {hand_to_str(game['hand'])}\n"
-            f"**Your Total:** {player_total}\n\n"
-            f"**Dealer's Hand:** {dealer_str}\n"
-            f"**Dealer's Total:** {dealer_total}\n\n"
-            f"**Your Doubled Bet:** {game['bet']} points\n"
-            f"{outcome_text}\n"
-            f"You {'won' if reward > 0 else 'lost' if reward < 0 else 'broke even'}, "
-            f"with a net change of **{abs(reward)}** points.\n"
-            f"Your new total is **{new_total}** points."
+            "♠️ **Double Down** ♠️\n\n"
+            f"**Your Hand:** {hand_to_str(player_hand)} (Total: {total})\n"
         )
-        await send_ephemeral_update(interaction, content, game["view"])
-        del GAMES[game_id]
-    except Exception:
-        traceback.print_exc()
+        if total > 21:
+            update_points(user_id, get_points(user_id) - game["bet"])
+            content += f"❌ **Bust!** You exceeded 21 and lost your doubled bet of {game['bet']} points.\n\n"
+            content += f"**New Total:** {get_points(user_id)} points"
+            await event.interaction.create_initial_response(
+                hikari.ResponseType.MESSAGE_UPDATE,
+                content=content,
+                
+            )
+            del GAMES[game_id]
+            return
+        await proceed_dealer_turn(game_id, event.interaction)
+    elif action == "bj_stand":
+        await proceed_dealer_turn(game_id, event.interaction)
+
+async def proceed_dealer_turn(game_id: str, interaction: hikari.ComponentInteraction) -> None:
+    game = GAMES.get(game_id)
+    if not game:
         await interaction.create_initial_response(
             hikari.ResponseType.MESSAGE_UPDATE,
-            "❌ An error occurred while processing your double down action.",
+            content="❌ Game not found.",
             flags=hikari.MessageFlag.EPHEMERAL
         )
+        return
+    dealer_hand = game["dealer_hand"] if "dealer_hand" in game else draw(2)
+    if "dealer_hand" not in game:
+        game["dealer_hand"] = dealer_hand
+
+    dealer_hand, dealer_total = simulate_dealer_turn(game["dealer_hand"])
+    player_total = calculate_total(game["player_hand"])
+    content = (
+        "♠️ **Dealer's Turn** ♠️\n\n"
+        f"**Your Hand:** {hand_to_str(game['player_hand'])} (Total: {player_total})\n"
+        f"**Dealer's Hand:** {hand_to_str(dealer_hand)} (Total: {dealer_total})\n\n"
+    )
+    if dealer_total > 21 or player_total > dealer_total:
+        outcome = "win"
+        content += f"🎉 You win! You earn a payout of {int(game['bet'] + game['bet'] * 0.5)} points."
+        print(f'{game["user_id"]} won at blackjack!')
+        update_points(game["user_id"], get_points(game["user_id"]) + int(game["bet"] + game["bet"] * 0.5))
+    elif dealer_total == player_total:
+        outcome = "tie"
+        content += "🤝 It's a push. You get your bet back."
+    else:
+        outcome = "loss"
+        content += f"❌ Dealer wins! You lose your bet of {game['bet']} points."
+        update_points(game["user_id"], get_points(game["user_id"]) - game["bet"])
+    new_total = get_points(game["user_id"])
+    content += f"\n\n**New Total:** {new_total} points"
+    await interaction.create_initial_response(
+        hikari.ResponseType.MESSAGE_UPDATE,
+        content=content
+    )
+    del GAMES[game_id]
+    

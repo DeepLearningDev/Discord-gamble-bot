@@ -25,10 +25,13 @@ def get_profile(user_id: int) -> dict:
     if uid not in profiles:
         profiles[uid] = {
             "user_id": uid,
-            "points": 0,
-            "wins_blackjack": 0,
-            "wins_predi": 0,
-            "inventory": []
+            "title": "",            # Your custom title (e.g., "Champion")
+            "color": 0,             # Store color as an integer (e.g., 0x1E90FF)
+            "points": 0,            # Starting points
+            "wins_blackjack": 0,    # Blackjack wins
+            "wins_predi": 0,        # Prediction wins
+            "achievements": [],     # List to store achievement names
+            "inventory": []         # List for items you might add later
         }
         save_profiles(profiles)
     return profiles[uid]
@@ -58,5 +61,5 @@ def add_point(user_id: int) -> None:
     Increment the user's points by one.
     """
     profile = get_profile(user_id)
-    profile["points"] = profile.get("points", 0) + 1
+    profile["points"] = profile.get("points", 0) + 2
     update_profile(user_id, profile)

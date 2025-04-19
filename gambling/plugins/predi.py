@@ -169,13 +169,13 @@ async def on_modal_submit(event: hikari.InteractionCreateEvent) -> None:
         return
 
     # Prevent the host from voting on their own prediction.
-    if user_id == predictions_data["active"][msg_id].get("host"):
-        await event.interaction.create_initial_response(
-            hikari.ResponseType.MESSAGE_CREATE,
-            content="You cannot vote on your own prediction event.",
-            flags=hikari.MessageFlag.EPHEMERAL
-        )
-        return
+    #if user_id == predictions_data["active"][msg_id].get("host"):
+    #    await event.interaction.create_initial_response(
+    #        hikari.ResponseType.MESSAGE_CREATE,
+    #        content="You cannot vote on your own prediction event.",
+    #        flags=hikari.MessageFlag.EPHEMERAL
+    #    )
+    #    return
 
     # Check that the user has enough points to cover the bet.
     available_points = get_points(int(user_id))
